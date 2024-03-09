@@ -1,0 +1,532 @@
+---
+title: "Case Study 1"
+author: "Jaren Shead"
+date: "2024-03-07"
+output: html_document
+---
+
+# Introduction
+
+This document presents an exploratory data analysis (EDA) performed on a dataset comprising beers and breweries. 
+The analysis aims to uncover insights and patterns within the data.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Clearing the workspace
+rm(list = ls())
+```
+
+# Loading necessary libraries
+
+```{r packages}
+
+library(tm) 
+library(tidyr)
+library(plyr)
+library(jsonlite)
+library(dplyr)
+library(tidyverse)
+library(stringr)
+library(class)
+library(caret)
+library(e1071)
+library(mvtnorm)
+```
+
+# Reading the beers and breweries data
+
+Note: Im also creating a 'Brew_ID' field in the beers df so that i can
+      eventually merge my data frames
+
+```{r data}
+
+beers_df = read.csv("C:/Users/jaren/OneDrive/Desktop/MSDS/DoingDataScience/Unit 8 Project/Beers.csv", header = TRUE)
+breweries_df = read.csv("C:/Users/jaren/OneDrive/Desktop/MSDS/DoingDataScience/Unit 8 Project/Breweries.csv", header = TRUE)
+
+beers_df$Brew_ID <- beers_df$Brewery_id
+```
+
+# 1. How many Breweries are epresent in each state
+Here we are investigating the amount of breweries in each state by plotting them.
+```{r Question 1}
+
+breweries_df |> 
+  count(State) |> # Count the number of breweries in each state directly
+  ggplot(aes(x = State, y = n, fill = State)) + # Use 'n' for counts
+  geom_bar(stat = "identity") + # Specify that we're using pre-computed counts
+  geom_text(aes(label = n), vjust = -0.3, color = "black") + # Add count labels above bars
+  ggtitle("Count of Breweries Present in Each State") +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 45, hjust = 1) # Improve x-axis label readability
+  ) +
+  xlab("State") +
+  ylab("Count of Breweries")
+
+
+```
+
+As you can see, there is a wide range of breweries across all the states. 
+Some important ones to note are Colorado with the most breweries with 47, California in second with 39, and Michigan in third with 32.
+
+```{Q2}
+```
+
+# 2.	Merge beer data with the breweries data. Print the first 6 observations 
+#     and the last six observations to check the merged file.  
+#     (RMD only, this does not need to be included in the presentation or the deck.)
+
+ 
+ Note:  This is the main df i will be using for my analysis
+
+```{r Question2}
+
+#joining on Brew_ID
+beers_breweries <- left_join(beers_df,breweries_df, by = "Brew_ID")
+
+# first six Observations
+head(beers_breweries, 6)
+# last six observations
+tail(beers_breweries, 6)
+
+# Creating Name fields and dropping R-given names
+beers_breweries$Beer_Name = beers_breweries$Name.x
+beers_breweries$Brewery_Name = beers_breweries$Name.y
+
+beers_breweries <-
+  beers_breweries |> 
+  select(-c(Name.y, Name.x, Brew_ID))
+```
+
+# 3.	Address the missing values in each column
+
+This code explores the NA values within our joined data frame and handles them accordingly.
+```{r Question3}
+
+# investigating which columns have missing values
+missing_counts <- data.frame(sapply(beers_breweries, function(x) sum(is.na(x))))
+
+colsums = data.frame(colSums(beers_breweries == "", na.rm = TRUE))
+
+missing_counts$Variable <- rownames(missing_counts)
+colsums$Variable <- rownames(colsums)
+
+# Rename the counts columns for clarity
+names(missing_counts)[1] <- "NA_Count"
+names(colsums)[1] <- "Empty_String_Count"
+
+# Merge the data frames by the common column 'Variable'
+combined_counts <- merge(missing_counts, colsums, by = "Variable")
+
+# View the combined data frame
+combined_counts
+combined_counts$total = combined_counts$NA_Count + combined_counts$Empty_String_Count
+ggplot(combined_counts, aes(x = Variable, y = total))+
+  geom_bar( aes(fill = Variable),stat = "identity")+
+  geom_text(aes(label = total)
+            , vjust = -0.25, size = 5, color = "black") +
+  ylab("Total NA")+
+  xlab("")+
+  ggtitle("Beers & Breweries NAs per Variable")+
+  theme(legend.position = "none")
+# ABv = 62
+# IBU = 1005
+# Style = 5
+
+# checking for patterns
+beers_breweries |>
+  group_by(Style) |>
+  filter(is.na(IBU)) |> 
+  count() |> 
+  arrange(desc(n))
+
+#Find the most common style
+most_common_style <- beers_breweries |> 
+  filter(!is.na(Style)) |>
+  group_by(Style) |>
+  summarize(count = n()) |>
+  arrange(desc(count)) |>
+  slice(1) |>
+  pull(Style)
+
+most_common_style
+#American IPA
+
+
+# Then, impute missing Style values
+beers_breweries$Style <- ifelse(beers_breweries$Style == "", most_common_style, beers_breweries$Style)
+colSums(beers_breweries == "", na.rm = TRUE)
+
+
+# since deleting 1005 ibu or 62 abv values could be detrimental to our analysis,
+#  i will impute the values using the mean or median
+
+# this fuctions checks for na values, then replaces them with the mean of the
+#   ABV values without the na's
+mean_Abv <-
+  beers_breweries |> 
+  group_by(Style) |> 
+  summarise(mean_abv = mean(ABV, na.rm = TRUE)) |> 
+  mutate(mean_aBV = mean_abv)
+  
+# joining mean_abv to main df
+beers_breweries = left_join(beers_breweries,mean_Abv, by = "Style")
+
+beers_breweries$ABV <- ifelse(is.na(beers_breweries$ABV), beers_breweries$mean_abv, beers_breweries$ABV)
+
+
+# sanity check
+missing_counts <- sapply(beers_breweries, function(x) sum(is.na(x)))
+print(missing_counts)
+
+
+# this fuctions checks for na values, then replaces them with the median of the
+#   IBU values without the na's due to its potential skewed distribution
+median_IBU <-
+  beers_breweries |> 
+  group_by(Style) |> 
+  summarise(median_IBU = median(IBU, na.rm = TRUE)) |> 
+  mutate(median_ibu = median_IBU)
+
+# joining median_IBU to main df
+beers_breweries = left_join(beers_breweries,median_IBU, by = "Style")
+
+beers_breweries$IBU <- ifelse(is.na(beers_breweries$IBU), 
+                              beers_breweries$median_ibu, beers_breweries$IBU)
+
+# sanity check 2
+missing_counts <- sapply(beers_breweries, function(x) sum(is.na(x)))
+print(missing_counts)
+
+
+
+beers_breweries <-
+  beers_breweries |> 
+    filter(!is.na(IBU))
+
+```
+To get rid of the NA's we use a measure of center (median) and impute. In both instances we take the mean of the ABV and IBU for each style of beverage, then replace the NA value in the ABV column based on the Style of beverage it is. This takes care of the 62 NA's for "ABV" column.
+We do the same for the IBU column.
+Lastly, to address the NA's under "Style" we took the mode (another measure of center) and replaced the five NA's with the most popular Style.
+```{Q4}
+```
+# 4.	Compute the median alcohol content and international bitterness unit for each state. ############################
+# Plot a bar chart to compare.
+
+This code combines calculations of Median ABV and IBU and plots accordingly.
+```{r Question 4}
+```
+#Plotting median IBU
+```{r Question 4 contd1}
+beers_breweries |>
+  select(ABV, IBU, State) |> 
+  group_by(State) |> 
+  summarise(Median_IBU = median(IBU)) |> 
+  gather(key = "Metric", value = "Median_Value", -State) |> 
+  ggplot(aes(x = State, y = Median_Value, fill = Metric))+
+           geom_bar(stat = "identity", position = "dodge") +
+           theme_minimal() +
+  labs(title = "Median IBU by State",
+       x = "State",
+       y = "Median Value") +
+  scale_fill_manual(values = c("Median_IBU" = "#FFD700")) +
+  geom_text(aes(label = round(Median_Value, 3)),position = position_dodge(width = 0.9), vjust = -0.25, size = 3, color = "black") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.background = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_line(color = "gray95"),
+    plot.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.title = element_text(size = 14, color = "black"),
+    axis.text = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+    legend.position = "none"
+  )+
+  facet_wrap(~Metric, scales = "free_y")
+           
+```
+
+
+```{r Question 4 contd2}
+# Plotting median ABV
+beers_breweries |>
+  select(ABV, IBU, State) |> 
+  group_by(State) |> 
+  summarise(Median_ABV = median(ABV)) |> 
+  gather(key = "Metric", value = "Median_Value", -State) |> 
+  ggplot(aes(x = State, y = Median_Value, fill = Metric))+
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(title = "Median ABV by State",
+       x = "State",
+       y = "Median Value") +
+  scale_fill_manual(values = c("Median_ABV" = "#FF0000")) +
+  geom_text(aes(label = round(Median_Value, 3)),position = position_dodge(width = 0.9), vjust = -0.25, size = 3, color = "black") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.background = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_line(color = "gray95"),
+    plot.title = element_text(face = "bold", size = 16, color = "black"),
+    axis.title = element_text(size = 14, color = "black"),
+    axis.text = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+    legend.position = "none"
+  )+
+  facet_wrap(~Metric, scales = "free_y")
+           
+```
+
+Delaware leads in median IBU at 60.5.
+Kentucky leads in median ABV at 6.4%.
+West Virginia is in the top two for both ABV and IBU, but there was only 1 brewery recorded in West Virginia which could be skewing those numbers due to the small sample size.
+```{Q5}
+```
+# 5.	Which state has the maximum alcoholic (ABV) beer? Which state has the most bitter (IBU) beer?
+ This code finds which states have the highest ABV and IBU by plotting.
+```{r Question 5}
+
+abv_ibu <-
+  data.frame(beers_breweries |>
+              select(ABV, IBU, State) |> 
+              group_by(State)
+             )
+
+abv_ibu[which.max(abv_ibu$ABV),]
+# Colorado - 12.8%
+# finding which state has highest abv
+max_abv_per_state <- 
+  abv_ibu |>
+  group_by(State) |>
+  summarize(Max_ABV = max(ABV, na.rm = TRUE)) |>
+  ungroup()  # Remove the grouping
+
+# Plotting the maximum ABV for each staTE
+ggplot(max_abv_per_state, aes(x = State, y = Max_ABV)) +
+  geom_col(fill = "blue") +  # Use geom_col to create a bar plot
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +  # Rotate x-axis labels for readability
+  labs(title = "Maximum ABV by State", 
+       x = "State", 
+       y = "Maximum ABV") + 
+  theme_grey() +
+  annotate("text", x = abv_ibu$State[which.max(abv_ibu$ABV)], 
+           y = max(abv_ibu$ABV), label = "Highest ABV", 
+           vjust = -.5)
+
+
+# finding which state has highest ibu
+abv_ibu[which.max(abv_ibu$IBU),]   # Oregon - 138
+
+max_ibu_per_state <- 
+  abv_ibu |>
+  group_by(State) |>
+  summarize(Max_IBU = max(IBU, na.rm = TRUE)) |>
+  ungroup()  # Remove the grouping
+
+# Plotting the maximum ABV for each state
+ggplot(max_ibu_per_state, aes(x = State, y = Max_IBU)) +
+  geom_col(fill = "red") +  # Use geom_col to create a bar plot
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +  # Rotate x-axis labels for readability
+  labs(title = "Maximum IBU by State", 
+       x = "State", 
+       y = "Maximum IBU") + 
+  theme_gray() +
+  annotate("text", x = abv_ibu$State[which.max(abv_ibu$IBU)], 
+           y = max(abv_ibu$IBU), label = "Highest IBU", 
+           vjust = -0.5)
+```
+
+Colorado has the highest ABV at 12.8%, and Oregon has the highest IBU at 138.
+```{Q6}
+```
+# 6.	Comment on the summary statistics and distribution of the ABV variable.
+This code performs simple summary statistics on the data so that we can beter understand the relationships within.
+```{r Question 6}
+
+summary(beers_breweries$ABV)
+sd(beers_breweries$ABV)
+
+# Calculate median and mean of ABV
+median_abv <- median(beers_breweries$ABV, na.rm = TRUE)
+mean_abv <- mean(beers_breweries$ABV, na.rm = TRUE)
+
+# Create the histogram
+ggplot(beers_breweries, aes(x = ABV)) +
+  geom_histogram(binwidth = .001, fill = "red") +
+  ggtitle("ABV Distribution") +
+  ylab("Frequency") + 
+  geom_vline(aes(xintercept = median_abv), color = "blue", linetype = "dashed", linewidth = 1) + # Median line
+  geom_vline(xintercept = mean_abv, color = "green", linetype = "dashed", linewidth = 1) + # Mean line
+  theme_minimal() + 
+  theme(axis.title.x = element_text(size = 12),  # Increase x-axis label size
+        axis.text.x = element_text(angle = 45, hjust = 1),  
+        plot.title = element_text(hjust = 0.5)) + 
+  annotate("text", x = .05, y = 210, label = paste("Median =", round(median_abv,4)), vjust = -1) + # Label for median
+  annotate("text", x = .065, y = 200, label = paste("Mean =", round(mean_abv,4)), vjust = -2) # Label for mean
+
+```
+ 
+ The ABV variable ranges from 1% to 12.8% with an average of about 6%.
+ There is a standard deviation of about .0134 or 1.34% .
+ Considering the scale of the variable, that seems somewhat large.
+ The data appears to be left skewed due the the beers with lower ABV percentages but remains normalized by 
+ higher ABV beers with 10-12%.
+```{Q7}
+```
+# 7.	Is there an apparent relationship between the bitterness of the beer and its alcoholic content? ######################
+# Draw a scatter plot.  Make your best judgment of a relationship and EXPLAIN your answer.
+
+```{r Question 7}
+
+breaks <- c(-Inf, 12, 16, Inf) # Assuming 'Small' is up to 12, 'Medium' is more than 12 and up to 16, 'Large' is more than 16
+labels <- c("Small", "Medium", "Large")
+
+# Convert the 'Ounces' variable into a factor with defined levels
+beers_breweries <- beers_breweries |> 
+  mutate(Ounces_Factor = cut(Ounces, breaks = breaks, labels = labels, include.lowest = TRUE))
+
+# Checking the changes
+head(beers_breweries)
+
+# Creating scatter plot   
+beers_breweries |> 
+  mutate(Type = as.factor(ifelse(grepl("India Pale Ale|IPA",Style, ignore.case = TRUE) == 1, "IPA",
+                                  "Other"))) |>   
+  ggplot(aes(x = ABV, y = IBU))+
+  geom_point(aes(color = Type, shape = Ounces_Factor), position = "dodge") + 
+  geom_smooth()
+```
+
+There seems to be somewhat of a positive relationship between ABV and IBU at first glance
+However, i am hesitant to jump to conclusions due to multiple of the highest ABV beers
+having relatively low bitterness levels
+This leads me to believe there are other factors besides ABV, that influence the bitterness of beer.
+The chart also highlights the fact that India Pale Ales (IPA) tend to have a much higher IBU,
+while most other beers stay in the lower to mid ranges.
+```{Q8}
+```
+# 8.	Budweiser would also like to investigate the difference with respect to IBU 
+#     and ABV between IPAs (India Pale Ales) and other types of Ale (any beer with “Ale” in its name other than IPA).  
+#     You decide to use KNN classification to investigate this relationship.  Provide statistical evidence one way or the other. 
+#     You can of course assume your audience is comfortable with percentages 
+
+```{r Question 8}
+
+# Filter dataset for IPAs and Ales
+beers_breweries_knn <-
+  beers_breweries |> 
+    mutate(Classification = as.factor(ifelse( grepl("India Pale Ale|IPA",Style, ignore.case = TRUE) == 1, "IPA",
+                                              ifelse(grepl("Ale",Style, ignore.case = FALSE) == 1, "Other", "")))) |> 
+  filter(Classification != "") |> 
+  droplevels(beers_breweries$Classification)
+
+dim(beers_breweries_knn) #1538 rows
+
+# partitioning the data
+trainInd = sample(seq(1,1538,1), 1538*.7) # creating random sample indexes
+training = beers_breweries_knn[trainInd,] # train data
+testing = beers_breweries_knn[-trainInd,] # test data
+
+# using knn to classify style of beer using ABV and IBU in the new testing set
+classifications = knn(training[,c(2,3)], testing[,c(2,3)], training$Classification, k = 15, prob = TRUE)
+# creating confusion matrix to calculate the accuracy, misclassification rate,
+# sensitivity and specificity
+confusionMatrix(classifications, testing$Classification )
+
+accuracy <- sum(classifications == testing$Classification) / length(testing$Classification)
+paste("Accuracy:", round(accuracy * 100, 2), "%")
+```
+
+- Accuracy: Approximately 90% percent of the prediction were correct. 
+- Sensitivity: About 80% of the actual IPAs were correctly identified. This means that out of all the IPAs, our model was             able to identify 80% correctly.
+-Specificity: Approximately 94% of the time, our model correctly identified 'Other' beers. This tells us that it's quite good        at identifying beers that are not IPAs
+
+```{Question 8 contd}
+
+
+# Using statistical tests to see if the differences in IBU and ABV between IPAs and other 
+# Ales are statistically significant
+
+# T-test for ABV
+t_test_abv <- t.test(ABV ~ Classification, data = beers_breweries_knn)
+
+# T-test for IBU
+t_test_ibu <- t.test(IBU ~ Classification, data = beers_breweries_knn)
+
+# Output the t-test results
+list(ABV_T_Test = t_test_abv, IBU_T_Test = t_test_ibu)
+```
+# ABV
+  The t-test results show that there is a statistically significant
+  difference in ABV between IPAs and Pale Ales, with IPAs having a higher mean ABV.
+  The extremely low p-value suggests that the observed difference is very unlikely to be due to chance.
+  This could indicate that IPAs are generally stronger in terms of alcohol content compared to Pale Ales,
+  which might reflect consumer preferences for stronger beers in the segment of the market that prefers IPAs.
+  This insight can be valuable for Budweiser in tailoring their product offerings to meet consumer
+  preferences or in targeting marketing efforts for different beer styles
+  
+# IBU
+  The t-test indicates a significant difference in bitterness between IPAs and Pale Ales,
+  with IPAs being much more bitter on average. This finding is highly statistically significant
+  and suggests that when it comes to bitterness, these two styles of beer cater to distinct taste preferences.
+  For Budweiser, this might imply a focus on marketing IPAs to consumers who prefer a bitter
+  taste and Pale Ales to those who prefer a less bitter beer. It can also inform decisions on product
+  development and positioning within the market
+```{Q9}
+```
+  
+# 9.	Knock their socks off!  Find one other useful inference from the data that you 
+# feel Budweiser may be able to find value in.  
+# You must convince them why it is important and back up your conviction with appropriate statistical evidence. 
+
+ Given the data, an interesting area of investigation could
+   involve analyzing beer styles' popularity and market trends. For this analysis,
+   we hypothesized that beers with specific ABV and IBU ranges tend to be more
+   popular or prevalent, indicating consumer preference.
+   
+```{r Question 9}
+
+#Exploring the distribution of ABV and IBU across different beer styles
+
+
+# ABV distribution across top 10 beer styles
+# Filter for only the top 10 most common beer styles
+top_styles <- beers_breweries |>
+  count(Style) |>
+  top_n(10, n) |>
+  pull(Style)
+
+filtered_data <- beers_breweries |>
+  filter(Style %in% top_styles)
+library(ggplot2)
+# Creating the boxplot with the filtered data
+ggplot(filtered_data, aes(x = reorder(Style, ABV, FUN = median), y = ABV)) + 
+  geom_boxplot(aes(color = Style)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  labs(title = "ABV Distribution Across Top 10 Beer Styles", x = "Beer Style", y = "ABV") +
+  theme(plot.title = element_text(hjust = 0.5))  # Center the plot title
+```
+
+A quick glance at the plot suggests that there is considerable diversity in ABV across beer styles.
+Some styles, like American Double/Imperial IPA, have a higher median ABV, reflecting their stronger profiles.
+The range of ABV values within styles could reflect diverse consumer preferences, with some consumers preferring lighter beers and others seeking stronger options.
+
+```{r Question 9 contd}
+# IBU distribution across beer styles
+ggplot(filtered_data, aes(x = reorder(Style, IBU, FUN = median), y = IBU)) + 
+  geom_boxplot(aes(color = Style)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "none") + 
+  labs(title = "IBU Distribution Across Top 10 Beer Styles", x = "Beer Style", y = "IBU")
+```
+
+Beer styles with higher IBU are often perceived as more bitter, and this plot shows
+which styles tend to have higher bitterness levels. This information could help Budweiser
+decide on product development strategies, such as creating beers that fit popular or niche bitterness profiles.
+Understanding the range and common values of IBU for popular styles can also inform quality control and consistency efforts in beer production.
+
