@@ -16,9 +16,6 @@ This repository contains the analysis of beer data, focused on uncovering insigh
 ## Contributing
 We welcome contributions and suggestions! Please open an issue or pull request for any improvements you wish to make.
 
-## Contact
-For any additional questions or comments, please contact [Jaren Shead](jshead@smu.edu).
-
 
 
 # Codebook for Case Study 1 Beer Data Analysis Project
