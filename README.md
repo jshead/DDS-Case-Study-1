@@ -19,6 +19,8 @@ We welcome contributions and suggestions! Please open an issue or pull request f
 ## Contact
 For any additional questions or comments, please contact [Jaren Shead](jshead@smu.edu).
 
+
+
 # Codebook for Case Study 1 Beer Data Analysis Project
 
 ## Introduction
